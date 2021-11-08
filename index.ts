@@ -1,6 +1,6 @@
-// @ts-ignore
+// @ts-ignore No types.
 import shuffleInplace from "fisher-yates/inplace";
-// @ts-ignore
+// @ts-ignore No types.
 import readline from 'readline-promise';
 
 class Card {
@@ -35,7 +35,7 @@ const baseDeck: Card[] = [];
 
 ["Ace", 2, 3, 4, 5, 6, 7, 8, 9, 10, "Jack", "Queen", "King"].map((value) => {
     ["Heart", "Diamond", "Spade", "Club"].map((suite) => {
-        // @ts-ignore
+        // @ts-ignore Typescript doesn't recognize value to only be valid entries.
         baseDeck.push(new Card(value, suite));
     });
 });
@@ -52,7 +52,7 @@ var drawCard = (): Card => {
         shuffleInplace(shuffledDeck);
     }
 
-    // @ts-ignore
+    // @ts-ignore If for some reason this returns undefined, that is a failure somehow.
     return shuffledDeck.pop();
 }
 
@@ -95,7 +95,6 @@ const rlp = readline.createInterface({
             process.stdout.write("Blackjack on draw!\n");
         } else {
             round: while (true) {
-                // @ts-ignore
                 var play = await rlp.questionAsync(`Dealer: ${dealerHand[0].description}.\nPlayer: ${playerHand.map((card) => { return card.description }).join(", ")}\n[hit/stand]`);
                 if (play === "hit") {
                     var drawnCard = drawCard();
