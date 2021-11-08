@@ -12,16 +12,22 @@ class Card {
         this.suite = suite;
     }
 
-    getValue() {
-        return this.value;
-    }
-
-    getSuite() {
-        return this.suite;
-    }
-
-    getDescription() {
+    get description() {
         return `${this.value} of ${this.suite}s`;
+    }
+
+    get acesLowValue() {
+        if (this.value >= 2 && this.value <= 10) {
+            return +this.value;
+        } else if (this.value === "Jack" || this.value === "Queen" || this.value === "King") {
+            return 10;
+        } else if (this.value === "Ace") {
+            return 1;
+        }
+    }
+
+    get isAce() {
+        return this.value === "Ace";
     }
 }
 
@@ -64,48 +70,32 @@ const rlp = readline.createInterface({
         var acesLowValue = 0;
         var acesCount = 0;
         // @ts-ignore
-        if (!isNaN(playerHand[0].getValue())) {
-            // @ts-ignore
-            acesLowValue += playerHand[0].getValue();
-            // @ts-ignore
-        } else if (playerHand[0].getValue() === "King" || playerHand[0].getValue() === "Queen" || playerHand[0].getValue() === "Jack") {
-            acesLowValue += 10;
-        } else {
-            acesCount++;
-            acesLowValue += 1;
-        }
+        acesLowValue += playerHand[0]?.acesLowValue;
         // @ts-ignore
-        if (!isNaN(playerHand[1].getValue())) {
-            // @ts-ignore
-            acesLowValue += playerHand[1].getValue();
-            // @ts-ignore
-        } else if (playerHand[1].getValue() === "King" || playerHand[1].getValue() === "Queen" || playerHand[1].getValue() === "Jack") {
-            acesLowValue += 10;
-        } else {
+        acesLowValue += playerHand[1]?.acesLowValue;
+
+        if (playerHand[0]?.isAce) {
             acesCount++;
-            acesLowValue += 1;
         }
+        if (playerHand[1]?.isAce) {
+            acesCount++;
+        }
+
         if (acesLowValue == 11 && acesCount >= 1) {
             process.stdout.write("Blackjack on draw!\n");
         } else {
             round: while (true) {
                 // @ts-ignore
-                var play = await rlp.questionAsync(`Dealer: ${dealerHand[0].getDescription()}.\nPlayer: ${playerHand.map((card) => { return card.getDescription() }).join(", ")}\n[hit/stand]`);
+                var play = await rlp.questionAsync(`Dealer: ${dealerHand[0]?.description}.\nPlayer: ${playerHand.map((card) => { return card.description }).join(", ")}\n[hit/stand]`);
                 if (play === "hit") {
                     var drawnCard = shuffledDeck.pop();
                     playerHand.push(drawnCard);
                     // @ts-ignore
-                    process.stdout.write(`Drew ${drawnCard.getDescription()}.\n`);
+                    process.stdout.write(`Drew ${drawnCard.description}.\n`);
                     // @ts-ignore
-                    if (!isNaN(drawnCard.getValue())) {
-                        // @ts-ignore
-                        acesLowValue += drawnCard.getValue();
-                        // @ts-ignore
-                    } else if (drawnCard.getValue() === "King" || drawnCard.getValue() === "Queen" || drawnCard.getValue() === "Jack") {
-                        acesLowValue += 10;
-                    } else {
+                    acesLowValue += drawnCard?.acesLowValue;
+                    if (drawnCard?.isAce) {
                         acesCount++;
-                        acesLowValue += 1;
                     }
 
                     if (acesLowValue > 21) {
@@ -126,9 +116,9 @@ const rlp = readline.createInterface({
         var dealerAces = 0;
         process.stdout.write("Dealer hand: \n");
         // @ts-ignore
-        process.stdout.write(`${dealerHand[0].getDescription()}\n`);
+        process.stdout.write(`${dealerHand[0].description}\n`);
         // @ts-ignore
-        process.stdout.write(`${dealerHand[1].getDescription()}\n`);
+        process.stdout.write(`${dealerHand[1].description}\n`);
 
         dealer: while (true) {
             if (dealerAcesLowValue >= 17 || (dealerAcesLowValue >= 7 && dealerAces >= 1)) {
@@ -138,18 +128,11 @@ const rlp = readline.createInterface({
             var drawnCard = shuffledDeck.pop();
             dealerHand.push(drawnCard);
             // @ts-ignore
-            process.stdout.write(`Drew ${drawnCard.getDescription()}\n`);
+            process.stdout.write(`Drew ${drawnCard.description}\n`);
             // @ts-ignore
-            if (drawnCard.getValue() >= 2 && drawnCard.getValue() <= 10) {
-                // @ts-ignore
-                dealerAcesLowValue += drawnCard.getValue();
-                // @ts-ignore
-            } else if (drawnCard.getValue() === "King" || drawnCard.getValue() === "Queen" || drawnCard.getValue() === "Jack") {
-                dealerAcesLowValue += 10;
-            } else {
-                dealerAces++;
-                dealerAcesLowValue += 1;
-            }
+            dealerAcesLowValue += drawnCard?.acesLowValue;
+            // @ts-ignore
+            dealerAces += drawnCard?.isAce;
             if (dealerAcesLowValue > 21) {
                 process.stdout.write(`Dealer busted.\n`);
                 break dealer;
