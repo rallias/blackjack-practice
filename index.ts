@@ -1,7 +1,14 @@
 // @ts-ignore No types.
 import shuffleInplace from "fisher-yates/inplace";
-// @ts-ignore No types.
-import readline from 'readline-promise';
+
+import express from 'express';
+import http from 'http';
+import { Server as SocketIOServer } from "socket.io";
+
+const app = express();
+app.get('/', async (req, res) => {
+    res.sendFile(__dirname + "/static/index.html");
+});
 
 class Card {
     value: "Ace" | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | "Jack" | "Queen" | "King";
@@ -31,6 +38,17 @@ class Card {
     }
 }
 
+var drawCard = (shuffledDeck: Card[], discardPile: Card[]): Card => {
+    if (shuffledDeck.length === 0) {
+        shuffledDeck.push(...discardPile);
+        discardPile.length = 0;
+        shuffleInplace(shuffledDeck);
+    }
+
+    // @ts-ignore If for some reason this returns undefined, that is a failure somehow.
+    return shuffledDeck.pop();
+}
+
 const baseDeck: Card[] = [];
 
 ["Ace", 2, 3, 4, 5, 6, 7, 8, 9, 10, "Jack", "Queen", "King"].map((value) => {
@@ -40,165 +58,169 @@ const baseDeck: Card[] = [];
     });
 });
 
+const server = http.createServer(app);
+const io = new SocketIOServer(server);
 var numberOfDecks = 1;
 
-var shuffledDeck: Card[] = [];
-var discardPile: Card[] = [];
+io.on('connection', (socket) => {
+    var shuffledDeck: Card[] = [];
+    var discardPile: Card[] = [];
+    var dealerHand: Card[] = [];
+    var dealerAcesLow = 0;
+    var dealerAces = false;
+    var playerHand: Card[] = [];
+    var playerAcesLow = 0;
+    var playerAces = false;
 
-var drawCard = (): Card => {
-    if (shuffledDeck.length === 0) {
-        shuffledDeck.push(...discardPile);
-        discardPile = [];
-        shuffleInplace(shuffledDeck);
+    for (var i = 0; i < numberOfDecks; i++) {
+        shuffledDeck.push(...baseDeck);
     }
 
-    // @ts-ignore If for some reason this returns undefined, that is a failure somehow.
-    return shuffledDeck.pop();
-}
+    shuffleInplace(shuffledDeck);
 
-for (var i = 0; i < numberOfDecks; i++) {
-    shuffledDeck.push(...baseDeck);
-}
+    var state = "startround";
 
-shuffleInplace(shuffledDeck);
+    socket.emit('chat message', "Play round? [y/n]");
 
-const rlp = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: true
+    socket.on('chat message', (msg) => {
+        if (state === "startround") {
+            if (msg === "y") {
+                state = "playinground";
+                dealerHand.push(drawCard(shuffledDeck, discardPile), drawCard(shuffledDeck, discardPile));
+                dealerAcesLow = dealerHand[0].acesLowValue + dealerHand[1].acesLowValue;
+                if (dealerHand[0].isAce || dealerHand[1].isAce) {
+                    dealerAces = true;
+                } else {
+                    dealerAces = false;
+                }
+                playerHand.push(drawCard(shuffledDeck, discardPile), drawCard(shuffledDeck, discardPile));
+                playerAcesLow = playerHand[0].acesLowValue + playerHand[1].acesLowValue;
+                if (playerHand[0].isAce || playerHand[1].isAce) {
+                    playerAces = true;
+                } else {
+                    playerAces = false;
+                }
+                socket.emit('chat message', `Dealer hand: ${dealerHand[0].description}`);
+                socket.emit('chat message', `Player hand: ${playerHand[0].description}, ${playerHand[1].description}`);
+                if (playerAcesLow == 11 && playerAces) {
+                    socket.emit('chat message', `Player blackjack!`);
+                    socket.emit('chat message', `Hole card: ${dealerHand[1].description}.`);
+                    if (dealerAcesLow == 11 && dealerAces) {
+                        socket.emit('chat message', `Dealer blackjack. Push.`);
+                    } else {
+                        socket.emit('chat message', 'Player win.');
+                    }
+                    discardPile.push(...dealerHand, ...playerHand);
+                    dealerHand = [];
+                    playerHand = [];
+                    socket.emit('chat message', "Play round? [y/n]");
+                    state = "startround";
+                } else {
+                    socket.emit('chat message', '[hit/stand]');
+                }
+            } else if (msg === "n") {
+                state = "broken";
+            }
+        } else if (state === "playinground") {
+            if (msg === "hit") {
+                var drawnCard = drawCard(shuffledDeck, discardPile);
+                playerHand.push(drawnCard);
+                playerAcesLow += drawnCard.acesLowValue;
+                socket.emit('chat message', `Player drew ${drawnCard.description}`);
+                if (playerAcesLow > 21) {
+                    socket.emit('chat message', 'Player busted.');
+                    discardPile.push(...dealerHand, ...playerHand);
+                    dealerHand = [];
+                    playerHand = [];
+                    socket.emit('chat message', "Play round? [y/n]");
+                    state = "startround";
+                } else if (playerAcesLow == 21 || (playerAcesLow == 11 && playerAcesLow)) {
+                    socket.emit('chat message', 'Player 21.');
+                    socket.emit('chat message', `Hole card ${dealerHand[1].description}`);
+                    while (dealerAcesLow < 17 || (dealerAces && dealerAcesLow <= 7)) {
+                        var dealerDrawnCard = drawCard(shuffledDeck, discardPile);
+                        dealerHand.push(dealerDrawnCard);
+                        socket.emit('chat message', `Dealer drew ${dealerDrawnCard.description}`);
+                        dealerAcesLow += dealerDrawnCard.acesLowValue;
+                        if (dealerDrawnCard.isAce) {
+                            dealerAces = true;
+                        }
+                        if (dealerAcesLow > 21) {
+                            socket.emit('chat message', 'Dealer busted.');
+                        }
+                    }
+
+                    if (dealerAcesLow <= 21) {
+                        var playerHandValue = playerAcesLow;
+                        if (playerAces && playerHandValue <= 11) {
+                            playerHandValue += 10;
+                        }
+                        var dealerHandValue = dealerAcesLow;
+                        if (dealerAces && dealerHandValue <= 11) {
+                            dealerHandValue += 10;
+                        }
+
+                        if (dealerHandValue > playerHandValue) {
+                            socket.emit('chat message', 'Dealer wins.');
+                        } else if (dealerHandValue < playerHandValue) {
+                            socket.emit('chat message', 'Player wins.');
+                        } else {
+                            socket.emit('chat message', 'push');
+                        }
+                    }
+
+                    discardPile.push(...dealerHand, ...playerHand);
+                    dealerHand.length = 0;
+                    playerHand.length = 0;
+                    socket.emit('chat message', "Play round? [y/n]");
+                    state = "startround";
+                } else {
+                    socket.emit('chat message', '[hit/stand]');
+                }
+            } else if (msg === "stand") {
+                socket.emit('chat message', `Hole card ${dealerHand[1].description}`);
+                while (dealerAcesLow < 17 || (dealerAces && dealerAcesLow <= 7)) {
+                    var dealerDrawnCard = drawCard(shuffledDeck, discardPile);
+                    dealerHand.push(dealerDrawnCard);
+                    socket.emit('chat message', `Dealer drew ${dealerDrawnCard.description}`);
+                    dealerAcesLow += dealerDrawnCard.acesLowValue;
+                    if (dealerDrawnCard.isAce) {
+                        dealerAces = true;
+                    }
+                    if (dealerAcesLow > 21) {
+                        socket.emit('chat message', 'Dealer busted.');
+                    }
+                }
+
+                if (dealerAcesLow <= 21) {
+                    var playerHandValue = playerAcesLow;
+                    if (playerAces && playerHandValue <= 11) {
+                        playerHandValue += 10;
+                    }
+                    var dealerHandValue = dealerAcesLow;
+                    if (dealerAces && dealerHandValue <= 11) {
+                        dealerHandValue += 10;
+                    }
+
+                    if (dealerHandValue > playerHandValue) {
+                        socket.emit('chat message', 'Dealer wins.');
+                    } else if (dealerHandValue < playerHandValue) {
+                        socket.emit('chat message', 'Player wins.');
+                    } else {
+                        socket.emit('chat message', 'push');
+                    }
+                }
+
+                discardPile.push(...dealerHand, ...playerHand);
+                dealerHand.length = 0;
+                playerHand.length = 0;
+                socket.emit('chat message', 'Play round? [y/n]');
+                state = "startround";
+            }
+        }
+    });
 });
 
-(async () => {
-    game: while (true) {
-        var nextRound = await rlp.questionAsync("Play round? (y/n)");
-        if (nextRound === "n") {
-            process.stdout.write("Goodbye.\n");
-            process.exit(0);
-        } else if (nextRound !== "y") {
-            continue game;
-        }
-        var dealerHand = [drawCard(), drawCard()];
-        var playerHand = [drawCard(), drawCard()];
-        var acesLowValue = 0;
-        var acesCount = 0;
-        acesLowValue += playerHand[0].acesLowValue;
-        acesLowValue += playerHand[1].acesLowValue;
-
-        if (playerHand[0].isAce) {
-            acesCount++;
-        }
-        if (playerHand[1].isAce) {
-            acesCount++;
-        }
-
-        if (acesLowValue == 11 && acesCount >= 1) {
-            process.stdout.write("Blackjack on draw!\n");
-        } else {
-            round: while (true) {
-                var play = await rlp.questionAsync(`Dealer: ${dealerHand[0].description}.\nPlayer: ${playerHand.map((card) => { return card.description }).join(", ")}\n[hit/stand]`);
-                if (play === "hit") {
-                    var drawnCard = drawCard();
-                    playerHand.push(drawnCard);
-                    process.stdout.write(`Drew ${drawnCard.description}.\n`);
-                    acesLowValue += drawnCard.acesLowValue;
-                    if (drawnCard.isAce) {
-                        acesCount++;
-                    }
-
-                    if (acesLowValue > 21) {
-                        process.stdout.write("Busted.\n");
-                        break round;;
-                    }
-
-                    if (acesLowValue == 21 || (acesLowValue == 11 && acesCount >= 1)) {
-                        process.stdout.write("Blackjack!\n");
-                        break round;
-                    }
-                } else if (play === "stand") {
-                    break round;
-                }
-            }
-        }
-
-        var dealerAcesLowValue = dealerHand[0].acesLowValue + dealerHand[1].acesLowValue;
-        var dealerAces = 0;
-        if (dealerHand[0].isAce) {
-            dealerAces++;
-        }
-
-        if (dealerHand[1].isAce) {
-            dealerAces++;
-        }
-
-        if (acesLowValue <= 21) {
-            process.stdout.write("Dealer hand: \n");
-            process.stdout.write(`${dealerHand[0].description}\n`);
-            process.stdout.write(`${dealerHand[1].description}\n`);
-
-            dealer: while (true) {
-                if (dealerAcesLowValue >= 17 || (dealerAcesLowValue > 7 && dealerAces >= 1)) {
-                    break dealer;
-                }
-
-                var drawnCard = drawCard();
-                dealerHand.push(drawnCard);
-                process.stdout.write(`Drew ${drawnCard.description}\n`);
-                dealerAcesLowValue += drawnCard.acesLowValue;
-                if (drawnCard.isAce) {
-                    dealerAces++;
-                }
-                if (dealerAcesLowValue > 21) {
-                    process.stdout.write(`Dealer busted.\n`);
-                    break dealer;
-                }
-                if (dealerAcesLowValue === 21 || (dealerAcesLowValue === 11 && dealerAces >= 1)) {
-                    process.stdout.write(`Dealer blackjack!\n`);
-                }
-            }
-        }
-
-        var dealerValue = dealerAcesLowValue;
-        if (dealerValue <= 11 && dealerAces >= 1) {
-            dealerValue += 10;
-        }
-
-        var playerValue = acesLowValue;
-        if (playerValue <= 11 && acesCount) {
-            playerValue += 10;
-        }
-
-        console.log(`Player value: ${playerValue}`);
-        console.log(`Dealer value: ${dealerValue}`);
-
-        var bust = false;
-
-        if ((dealerValue > 21) && (playerValue > 21)) {
-            process.stdout.write("No winners, both busted.\n");
-            bust = true;
-        }
-
-        if ((dealerValue > 21) && (playerValue <= 21)) {
-            process.stdout.write("Player win, dealer busted.\n");
-            bust = true;
-        }
-
-        if ((dealerValue <= 21) && (playerValue > 21)) {
-            process.stdout.write("Dealer win, player busted.\n");
-            bust = true;
-        }
-
-        if (!bust && dealerValue > playerValue) {
-            process.stdout.write(`Dealer wins: ${dealerValue} > ${playerValue}.\n`);
-        }
-
-        if (!bust && dealerValue < playerValue) {
-            process.stdout.write(`Player wins: ${dealerValue} < ${playerValue}\n`);
-        }
-
-        if (!bust && dealerValue == playerValue) {
-            process.stdout.write(`Draw: ${dealerValue} == ${playerValue}\n`);
-        }
-
-        discardPile.push(...playerHand, ...dealerHand);
-    }
-})();
+server.listen(3002, () => {
+    console.log("Listening on *:3002");
+});
